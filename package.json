@@ -82,5 +82,8 @@
   "homepage": "http://abbekeultjes.nl/honeycomb",
   "engines": {
     "node": ">=16"
+  },
+  "dependencies": {
+    "priority-queue-typescript": "^1.0.1"
   }
 }
