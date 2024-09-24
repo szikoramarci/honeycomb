@@ -1,76 +1,103 @@
-import PriorityQueue from 'priority-queue-typescript'
+import { PriorityQueue, Dictionary } from 'typescript-collections'
 import { defaultHexSettings, equals, Hex, HexCoordinates, OffsetCoordinates } from '../../hex'
 import { Grid } from '../grid'
-import { Traverser } from '../types'
-import { distance } from '../functions'
-import { ring } from './ring'
-
-interface HexPriority {
-  hex: Hex
-  priority: number
-}
+import { Direction, Traverser } from '../types'
+import { distance, neighborOf } from '../functions'
 
 export function pathFind<T extends Hex>(
-  start: HexCoordinates,
-  target: HexCoordinates,
+  startCoordinates: HexCoordinates,
+  targetCoordinates: HexCoordinates,
   obstacles?: Grid<T>,
+  maxQueueSize: number = 100,
+  basicCostOfStep: number = 1,
 ): Traverser<T> {
-  return function reachableTraverser(createHex, cursor) {
-    const startHex = createHex(start ?? cursor ?? [0, 0])
-    const targetHex = createHex(target)
-    const path: Map<string, string | null> = new Map<string, string | null>()
-    const costOfPath: Map<string, number> = new Map<string, number>()
-    const queue = new PriorityQueue<HexPriority>(1, (a: HexPriority, b: HexPriority) => {
-      return a.priority - b.priority
-    })
+  const directions: Direction[] = Object.values(Direction).filter((value) => typeof value === 'number')
+  const steps = new Dictionary<T, T>()
+  const costOfSteps = new Dictionary<T, number>()
+  const queue = new PriorityQueue<PriorityObject>((a, b) => b.priority - a.priority)
 
-    if (obstacles) {
-        console.log('OBSTACLE')
-    }
-
-    queue.add({ hex: startHex, priority: 0 })
-    costOfPath.set(startHex.toString(), 0)
-
-    while (!queue.empty()) {
-      const currentHexPriority: HexPriority | null = queue.poll()
-
-      if (currentHexPriority?.hex == null) {
-        break
-      }
-      const currentHex: Hex = currentHexPriority?.hex
-
-      if (equals(currentHex, targetHex)) {
-        break
-      }
-
-      const neighbors = new Grid(Hex, ring({ center: currentHex, radius: 1 }))
-      neighbors.forEach((neighborHex) => {
-        const costOfStep = (costOfPath.get(currentHex.toString()) || 0) + 1 // TODO CHECK NEIGHBOR IS OBSTACLE
-        if (!costOfPath.has(neighborHex.toString()) || costOfStep < (costOfPath.get(neighborHex.toString()) || 99999)) {
-          costOfPath.set(neighborHex.toString(), costOfStep)
-          const priority = costOfStep + calculateDistance(neighborHex, targetHex)
-          queue.add({ hex: neighborHex, priority })
-          path.set(neighborHex.toString(), currentHex.toString())
-        }
-      })
-    }
-
-    let current: string | null = targetHex.toString()
-    const fullPath: string[] = []
-
-    // Backtrack from target to start
-    while (current && current !== startHex.toString()) {
-      fullPath.unshift(current) // Add to the front of the path
-      current = path.get(current) || null
-    }
-
-    // Add the start hex at the beginning
-    fullPath.unshift(startHex.toString())
-
-    return []
+  interface PriorityObject {
+    element: T
+    priority: number
   }
 
-  function calculateDistance(a: Hex, b: Hex): number {
+  return function reachableTraverser(createHex, cursor) {
+    const { start, target } = initializeTraversal(createHex, startCoordinates, targetCoordinates, cursor)
+
+    while (!queue.isEmpty()) {
+      if (queue.size() > maxQueueSize) return []
+
+      const currentPriorityObject = queue.dequeue()
+      if (!currentPriorityObject) break
+
+      const current = currentPriorityObject.element
+      if (equals(current, target)) break
+
+      calculatePaths(current, target)
+    }
+
+    return buildFullPath(start, target)
+  }
+
+  function initializeTraversal(
+    createHex: (coordinates?: HexCoordinates) => T,
+    startCoordinates: HexCoordinates,
+    targetCoordinates: HexCoordinates,
+    cursor: HexCoordinates | undefined,
+  ) {
+    const start = createHex(startCoordinates ?? cursor ?? [0, 0])
+    const target = createHex(targetCoordinates)
+
+    queue.add({ element: start, priority: 0 })
+    costOfSteps.setValue(start, 0)
+
+    return { start, target }
+  }
+
+  function calculatePaths(current: T, target: T) {
+    directions.forEach((direction) => {
+      const neighbor = neighborOf(current, direction)
+      const costOfStep = (costOfSteps.getValue(current) || 0) + basicCostOfStep
+      if (isValidNeighbor(neighbor, costOfStep)) {
+        updateTraversalState(neighbor, current, costOfStep, target)
+      }
+    })
+  }
+
+  function isValidNeighbor(neighbor: T, costOfStep: number) {
+    return (
+      !isObstacle(neighbor) &&
+      (!costOfSteps.containsKey(neighbor) || costOfStep < (costOfSteps.getValue(neighbor) || Number.MAX_VALUE))
+    )
+  }
+
+  function updateTraversalState(neighbor: T, current: T, costOfStep: number, target: T) {
+    costOfSteps.setValue(neighbor, costOfStep)
+    const priority = costOfStep + calculateDistance(neighbor, target)
+    queue.add({ element: neighbor, priority })
+    steps.setValue(neighbor, current)
+  }
+
+  function buildFullPath(start: T, target: T): T[] {
+    if (steps.size() === 0) return []
+
+    const fullPath: T[] = []
+    let current: T | null = target
+
+    while (current && current !== start) {
+      fullPath.unshift(current)
+      current = steps.getValue(current) || null
+    }
+
+    fullPath.unshift(start)
+    return fullPath
+  }
+
+  function isObstacle(t: T) {
+    return obstacles?.hasHex(t) || false
+  }
+
+  function calculateDistance(a: T, b: T): number {
     const aCoordinates: OffsetCoordinates = { col: a.col, row: a.row }
     const bCoordinates: OffsetCoordinates = { col: b.col, row: b.row }
     return distance(defaultHexSettings, aCoordinates, bCoordinates)
